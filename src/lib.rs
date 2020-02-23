@@ -1,4 +1,4 @@
-use libc::{c_char, size_t};
+use libc::{c_char, c_int, size_t};
 use mikack::{extractors, models};
 use std::{collections::HashMap, ffi::CString, mem, slice};
 
@@ -67,7 +67,7 @@ pub struct Tag {
 impl From<&models::Tag> for Tag {
     fn from(t: &models::Tag) -> Self {
         Tag {
-            value: t.clone() as i32,
+            value: *t as i32,
             name: CString::new(t.to_string().as_bytes()).unwrap().into_raw(),
         }
     }
@@ -100,4 +100,34 @@ pub extern "C" fn free_tag_array(ptr: *mut CArray<Tag>) {
             .for_each(drop);
         mem::drop(Box::from_raw(array.data));
     }
+}
+
+pub fn enumed_tags(values: &[i32]) -> Vec<models::Tag> {
+    values
+        .iter()
+        .map(|v| models::Tag::from_i32(*v))
+        .filter(|r| r.is_some())
+        .map(|r| r.unwrap())
+        .collect::<Vec<_>>()
+}
+
+#[no_mangle]
+pub extern "C" fn find_platforms(
+    inc_ptr: *mut c_int,
+    inc_len: size_t,
+    exc_ptr: *mut c_int,
+    exc_len: size_t,
+) -> *mut CArray<Platform> {
+    let includes = unsafe {
+        let values = slice::from_raw_parts_mut(inc_ptr, inc_len);
+        enumed_tags(values)
+    };
+    let excludes = unsafe {
+        let values = slice::from_raw_parts_mut(exc_ptr, exc_len);
+        enumed_tags(values)
+    };
+
+    let platforms = CArray::from(&extractors::find_platforms(includes, excludes));
+
+    Box::into_raw(Box::new(platforms))
 }
