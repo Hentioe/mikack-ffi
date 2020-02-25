@@ -319,3 +319,71 @@ pub unsafe fn free_page_headers(ptr: *mut CArray<KV<*mut c_char, *mut c_char>>) 
         .for_each(drop);
     mem::drop(Box::from_raw(array.data));
 }
+
+#[no_mangle]
+pub extern "C" fn create_chapter_ptr(url_ptr: *const c_char) -> *mut models::Chapter {
+    let url = unsafe { CStr::from_ptr(url_ptr).to_str().unwrap() };
+
+    Box::into_raw(Box::new(models::Chapter::from_link("", url)))
+}
+
+#[derive(Debug)]
+#[repr(C)]
+pub struct CreatedPageIter<'a> {
+    count: c_int,
+    title: *mut c_char,
+    iter: *mut extractors::ChapterPages<'a>,
+}
+
+#[no_mangle]
+pub extern "C" fn create_page_iter<'a>(
+    extr_ptr_ptr: *mut ExtrPtr,
+    chapter_ptr: *mut models::Chapter,
+) -> *mut CreatedPageIter<'a> {
+    let ptr = unsafe { Box::from_raw(extr_ptr_ptr) };
+    let extr = unsafe { &**ptr };
+    let chapter = unsafe { &mut *chapter_ptr };
+
+    let mut iter = Box::new(extr.pages_iter(chapter).unwrap());
+    let title = iter.chapter_title_clone();
+    let count = iter.total;
+
+    let ptr = Box::into_raw(Box::new(CreatedPageIter {
+        count,
+        title: CString::new(title.as_bytes()).unwrap().into_raw(),
+        iter: &mut *iter,
+    }));
+    mem::forget(iter);
+
+    ptr
+}
+
+#[no_mangle]
+pub extern "C" fn free_created_page_iter(ptr: *mut CreatedPageIter) {
+    unsafe {
+        let created_page_iter = Box::from_raw(ptr);
+        CString::from_raw(created_page_iter.title);
+        Box::from_raw(created_page_iter.iter);
+    };
+}
+
+#[no_mangle]
+pub extern "C" fn next_page<'a>(iter_ptr: *mut extractors::ChapterPages<'a>) -> *mut c_char {
+    let iter = unsafe { &mut *iter_ptr };
+    let empty_str = || CString::new("").unwrap().into_raw();
+    if let Some(page) = iter.next() {
+        match page {
+            Ok(p) => CString::new(p.address.as_bytes()).unwrap().into_raw(),
+            Err(e) => CString::new(e.to_string().as_bytes()).unwrap().into_raw(),
+        }
+    } else {
+        empty_str()
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn free_string(ptr: *mut c_char) {
+    unsafe {
+        CString::from(CStr::from_ptr(ptr));
+    }
+}
