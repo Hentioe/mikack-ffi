@@ -1,5 +1,8 @@
 use libc::{c_char, c_int, c_uint, size_t};
-use mikack::{extractors, models};
+use mikack::{
+    extractors,
+    models::{self, FromLink},
+};
 use std::{
     collections::HashMap,
     ffi::{CStr, CString},
@@ -158,6 +161,60 @@ pub struct Comic {
     cover: *mut c_char,
 }
 
+#[derive(Debug)]
+#[repr(C)]
+pub struct Chapter {
+    title: *mut c_char,
+    url: *mut c_char,
+    which: c_uint,
+    page_headers: *mut CArray<KV<*mut c_char, *mut c_char>>,
+}
+
+#[derive(Debug)]
+#[repr(C)]
+pub struct KV<K, V> {
+    key: K,
+    value: V,
+}
+
+impl From<&models::Chapter> for Chapter {
+    fn from(c: &models::Chapter) -> Self {
+        let page_header_items: Vec<KV<*mut c_char, *mut c_char>> = c
+            .page_headers
+            .iter()
+            .map(|(header, value)| KV {
+                key: CString::new(header.as_bytes()).unwrap().into_raw(),
+                value: CString::new(value.as_bytes()).unwrap().into_raw(),
+            })
+            .collect::<Vec<_>>();
+        let len = page_header_items.len();
+        let mut boxed_data = page_header_items.into_boxed_slice();
+        let data = boxed_data.as_mut_ptr();
+        mem::forget(boxed_data);
+
+        let page_headers = Box::into_raw(Box::new(CArray { len, data }));
+        Chapter {
+            title: CString::new(c.title.as_bytes()).unwrap().into_raw(),
+            url: CString::new(c.url.as_bytes()).unwrap().into_raw(),
+            which: c.which,
+            page_headers,
+        }
+    }
+}
+
+impl From<&Vec<models::Chapter>> for CArray<Chapter> {
+    fn from(list: &Vec<models::Chapter>) -> Self {
+        let len = list.len();
+        let items = list.iter().map(|c| Chapter::from(c)).collect::<Vec<_>>();
+
+        let mut boxed_data = items.into_boxed_slice();
+        let data = boxed_data.as_mut_ptr();
+        mem::forget(boxed_data);
+
+        CArray { len, data }
+    }
+}
+
 impl From<&models::Comic> for Comic {
     fn from(c: &models::Comic) -> Self {
         Comic {
@@ -217,4 +274,48 @@ pub extern "C" fn search(
 
     let array = CArray::from(extr.search(keywords).unwrap());
     Box::into_raw(Box::new(array))
+}
+
+#[no_mangle]
+pub extern "C" fn chapters(
+    extr_ptr_ptr: *mut ExtrPtr,
+    url_ptr: *const c_char,
+) -> *mut CArray<Chapter> {
+    let ptr = unsafe { Box::from_raw(extr_ptr_ptr) };
+    let extr = unsafe { &**ptr };
+    let url = unsafe { CStr::from_ptr(url_ptr).to_str().unwrap() };
+
+    let comic = &mut models::Comic::from_link("", url);
+    extr.fetch_chapters(comic).unwrap();
+
+    let array = CArray::from(&comic.chapters);
+    Box::into_raw(Box::new(array))
+}
+
+#[no_mangle]
+pub extern "C" fn free_chapter_array(ptr: *mut CArray<Chapter>) {
+    unsafe {
+        let array = Box::from_raw(ptr);
+        slice::from_raw_parts_mut(array.data, array.len)
+            .iter_mut()
+            .map(|c: &mut Chapter| {
+                CString::from_raw(c.title);
+                CString::from_raw(c.url);
+                free_page_headers(c.page_headers);
+            })
+            .for_each(drop);
+        mem::drop(Box::from_raw(array.data));
+    }
+}
+
+pub unsafe fn free_page_headers(ptr: *mut CArray<KV<*mut c_char, *mut c_char>>) {
+    let array = Box::from_raw(ptr);
+    slice::from_raw_parts_mut(array.data, array.len)
+        .iter_mut()
+        .map(|kv| {
+            CString::from_raw(kv.key);
+            CString::from_raw(kv.value);
+        })
+        .for_each(drop);
+    mem::drop(Box::from_raw(array.data));
 }
