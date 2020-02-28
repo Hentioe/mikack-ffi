@@ -12,3 +12,4 @@ crate-type = ["cdylib"]
 [dependencies]
 mikack = { git = "https://github.com/Hentioe/mikack", branch = "master" }
 libc = "0.2.67"
+openssl-sys = { version = "0.9.54", features = ["vendored"]}

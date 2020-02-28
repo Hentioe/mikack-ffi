@@ -387,3 +387,7 @@ pub extern "C" fn free_string(ptr: *mut c_char) {
         CString::from(CStr::from_ptr(ptr));
     }
 }
+
+// Fix `cannot locate symbol : "__assert_fail"` for Android platform
+#[no_mangle]
+pub extern "C" fn __assert_fail() {}
