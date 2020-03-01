@@ -14,6 +14,11 @@ use std::{
 pub struct Platform {
     pub domain: *mut c_char,
     pub name: *mut c_char,
+    pub favicon: *mut c_char,
+    pub is_usable: bool,
+    pub is_searchable: bool,
+    pub is_pageable: bool,
+    pub is_https: bool,
 }
 
 #[derive(Debug)]
@@ -27,9 +32,17 @@ impl From<&HashMap<String, String>> for CArray<Platform> {
     fn from(map: &HashMap<String, String>) -> Self {
         let mut data_items = vec![];
         for (domain, name) in map.iter() {
+            let extr = extractors::get_extr(domain).unwrap();
             data_items.push(Platform {
                 domain: CString::new(domain.as_bytes()).unwrap().into_raw(),
                 name: CString::new(name.as_bytes()).unwrap().into_raw(),
+                favicon: CString::new(extr.get_favicon().unwrap_or(&"").as_bytes())
+                    .unwrap()
+                    .into_raw(),
+                is_usable: extr.is_usable(),
+                is_searchable: extr.is_searchable(),
+                is_pageable: extr.is_pageable(),
+                is_https: extr.is_https(),
             });
         }
 
@@ -58,6 +71,7 @@ pub extern "C" fn free_platform_array(ptr: *mut CArray<Platform>) {
             .map(|p: &mut Platform| {
                 CString::from_raw(p.domain);
                 CString::from_raw(p.name);
+                CString::from_raw(p.favicon);
             })
             .for_each(drop);
         mem::drop(Box::from_raw(array.data));
