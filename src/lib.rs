@@ -294,12 +294,14 @@ pub extern "C" fn search(
 pub extern "C" fn chapters(
     extr_ptr_ptr: *mut ExtrPtr,
     url_ptr: *const c_char,
+    title_prt: *const c_char,
 ) -> *mut CArray<Chapter> {
     let ptr = unsafe { Box::from_raw(extr_ptr_ptr) };
     let extr = unsafe { &**ptr };
     let url = unsafe { CStr::from_ptr(url_ptr).to_str().unwrap() };
+    let title = unsafe { CStr::from_ptr(title_prt).to_str().unwrap() };
 
-    let comic = &mut models::Comic::from_link("", url);
+    let comic = &mut models::Comic::from_link(title, url);
     extr.fetch_chapters(comic).unwrap();
 
     let array = CArray::from(&comic.chapters);
