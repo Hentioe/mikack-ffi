@@ -326,6 +326,10 @@ pub extern "C" fn free_chapter_array(ptr: *mut CArray<Chapter>) {
 
 pub unsafe fn free_page_headers(ptr: *mut CArray<KV<*mut c_char, *mut c_char>>) {
     let array = Box::from_raw(ptr);
+    if array.len == 0 {
+        // 空数组无需释放
+        return;
+    }
     slice::from_raw_parts_mut(array.data, array.len)
         .iter_mut()
         .map(|kv| {
