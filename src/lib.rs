@@ -19,6 +19,7 @@ pub struct Platform {
     pub is_searchable: bool,
     pub is_pageable: bool,
     pub is_https: bool,
+    pub tags: *mut CArray<Tag>,
 }
 
 #[derive(Debug)]
@@ -43,6 +44,7 @@ impl From<&HashMap<String, String>> for CArray<Platform> {
                 is_searchable: extr.is_searchable(),
                 is_pageable: extr.is_pageable(),
                 is_https: extr.is_https(),
+                tags: create_tags_ptr(extr.tags()),
             });
         }
 
@@ -66,12 +68,16 @@ pub extern "C" fn platforms() -> *mut CArray<Platform> {
 pub extern "C" fn free_platform_array(ptr: *mut CArray<Platform>) {
     unsafe {
         let array = Box::from_raw(ptr);
+        if array.len == 0 {
+            return;
+        }
         slice::from_raw_parts_mut(array.data, array.len)
             .iter_mut()
             .map(|p: &mut Platform| {
                 CString::from_raw(p.domain);
                 CString::from_raw(p.name);
                 CString::from_raw(p.favicon);
+                free_tag_array(p.tags);
             })
             .for_each(drop);
         mem::drop(Box::from_raw(array.data));
@@ -94,12 +100,8 @@ impl From<&models::Tag> for Tag {
     }
 }
 
-#[no_mangle]
-pub extern "C" fn tags() -> *mut CArray<Tag> {
-    let items = models::Tag::all()
-        .iter()
-        .map(|t| Tag::from(t))
-        .collect::<Vec<_>>();
+pub fn create_tags_ptr(tags: &Vec<models::Tag>) -> *mut CArray<Tag> {
+    let items = tags.iter().map(|t| Tag::from(t)).collect::<Vec<_>>();
 
     let len = items.len();
     let mut boxed_data = items.into_boxed_slice();
@@ -110,9 +112,17 @@ pub extern "C" fn tags() -> *mut CArray<Tag> {
 }
 
 #[no_mangle]
+pub extern "C" fn tags() -> *mut CArray<Tag> {
+    create_tags_ptr(&models::Tag::all())
+}
+
+#[no_mangle]
 pub extern "C" fn free_tag_array(ptr: *mut CArray<Tag>) {
     unsafe {
         let array = Box::from_raw(ptr);
+        if array.len == 0 {
+            return;
+        }
         slice::from_raw_parts_mut(array.data, array.len)
             .iter_mut()
             .map(|t: &mut Tag| {
@@ -265,6 +275,9 @@ pub extern "C" fn index(extr_ptr_ptr: *mut ExtrPtr, page: c_uint) -> *mut CArray
 pub extern "C" fn free_comic_array(ptr: *mut CArray<Comic>) {
     unsafe {
         let array = Box::from_raw(ptr);
+        if array.len == 0 {
+            return;
+        }
         slice::from_raw_parts_mut(array.data, array.len)
             .iter_mut()
             .map(|c: &mut Comic| {
@@ -312,6 +325,9 @@ pub extern "C" fn chapters(
 pub extern "C" fn free_chapter_array(ptr: *mut CArray<Chapter>) {
     unsafe {
         let array = Box::from_raw(ptr);
+        if array.len == 0 {
+            return;
+        }
         slice::from_raw_parts_mut(array.data, array.len)
             .iter_mut()
             .map(|c: &mut Chapter| {
@@ -327,7 +343,6 @@ pub extern "C" fn free_chapter_array(ptr: *mut CArray<Chapter>) {
 pub unsafe fn free_page_headers(ptr: *mut CArray<KV<*mut c_char, *mut c_char>>) {
     let array = Box::from_raw(ptr);
     if array.len == 0 {
-        // 空数组无需释放
         return;
     }
     slice::from_raw_parts_mut(array.data, array.len)
