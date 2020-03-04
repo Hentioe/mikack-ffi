@@ -201,22 +201,27 @@ pub struct KV<K, V> {
     value: V,
 }
 
+pub fn create_headers_ptr(
+    headers: &HashMap<String, String>,
+) -> *mut CArray<KV<*mut c_char, *mut c_char>> {
+    let headers_items = headers
+        .iter()
+        .map(|(header, value)| KV {
+            key: CString::new(header.as_bytes()).unwrap().into_raw(),
+            value: CString::new(value.as_bytes()).unwrap().into_raw(),
+        })
+        .collect::<Vec<_>>();
+    let len = headers_items.len();
+    let mut boxed_data = headers_items.into_boxed_slice();
+    let data = boxed_data.as_mut_ptr();
+    mem::forget(boxed_data);
+
+    Box::into_raw(Box::new(CArray { len, data }))
+}
+
 impl From<&models::Chapter> for Chapter {
     fn from(c: &models::Chapter) -> Self {
-        let page_header_items: Vec<KV<*mut c_char, *mut c_char>> = c
-            .page_headers
-            .iter()
-            .map(|(header, value)| KV {
-                key: CString::new(header.as_bytes()).unwrap().into_raw(),
-                value: CString::new(value.as_bytes()).unwrap().into_raw(),
-            })
-            .collect::<Vec<_>>();
-        let len = page_header_items.len();
-        let mut boxed_data = page_header_items.into_boxed_slice();
-        let data = boxed_data.as_mut_ptr();
-        mem::forget(boxed_data);
-
-        let page_headers = Box::into_raw(Box::new(CArray { len, data }));
+        let page_headers = create_headers_ptr(&c.page_headers);
         Chapter {
             title: CString::new(c.title.as_bytes()).unwrap().into_raw(),
             url: CString::new(c.url.as_bytes()).unwrap().into_raw(),
@@ -333,14 +338,14 @@ pub extern "C" fn free_chapter_array(ptr: *mut CArray<Chapter>) {
             .map(|c: &mut Chapter| {
                 CString::from_raw(c.title);
                 CString::from_raw(c.url);
-                free_page_headers(c.page_headers);
+                free_headers(c.page_headers);
             })
             .for_each(drop);
         mem::drop(Box::from_raw(array.data));
     }
 }
 
-pub unsafe fn free_page_headers(ptr: *mut CArray<KV<*mut c_char, *mut c_char>>) {
+pub unsafe fn free_headers(ptr: *mut CArray<KV<*mut c_char, *mut c_char>>) {
     let array = Box::from_raw(ptr);
     if array.len == 0 {
         return;
@@ -367,6 +372,7 @@ pub extern "C" fn create_chapter_ptr(url_ptr: *const c_char) -> *mut models::Cha
 pub struct CreatedPageIter<'a> {
     count: c_int,
     title: *mut c_char,
+    headers: *mut CArray<KV<*mut c_char, *mut c_char>>,
     iter: *mut extractors::ChapterPages<'a>,
 }
 
@@ -382,10 +388,12 @@ pub extern "C" fn create_page_iter<'a>(
     let mut iter = Box::new(extr.pages_iter(chapter).unwrap());
     let title = iter.chapter_title_clone();
     let count = iter.total;
+    let headers = &iter.chapter.page_headers;
 
     let ptr = Box::into_raw(Box::new(CreatedPageIter {
         count,
         title: CString::new(title.as_bytes()).unwrap().into_raw(),
+        headers: create_headers_ptr(headers),
         iter: &mut *iter,
     }));
     mem::forget(iter);
@@ -398,6 +406,7 @@ pub extern "C" fn free_created_page_iter(ptr: *mut CreatedPageIter) {
     unsafe {
         let created_page_iter = Box::from_raw(ptr);
         CString::from_raw(created_page_iter.title);
+        free_headers(created_page_iter.headers);
         Box::from_raw(created_page_iter.iter);
     };
 }
