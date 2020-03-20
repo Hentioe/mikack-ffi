@@ -19,6 +19,7 @@ pub struct Platform {
     pub is_searchable: bool,
     pub is_pageable: bool,
     pub is_https: bool,
+    pub is_search_pageable: bool,
     pub tags: *mut CArray<Tag>,
 }
 
@@ -44,6 +45,7 @@ impl From<&HashMap<String, String>> for CArray<Platform> {
                 is_searchable: extr.is_searchable(),
                 is_pageable: extr.is_pageable(),
                 is_https: extr.is_https(),
+                is_search_pageable: extr.is_paginable_search(),
                 tags: create_tags_ptr(extr.tags()),
             });
         }
