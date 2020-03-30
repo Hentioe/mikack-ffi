@@ -1,7 +1,7 @@
 use libc::{c_char, c_int, c_uint, size_t};
 use mikack::{
     extractors,
-    models::{self, FromLink, FromUrl},
+    models::{self, FromLink},
 };
 use std::{
     collections::HashMap,
@@ -323,16 +323,21 @@ pub extern "C" fn search(
 }
 
 #[no_mangle]
-pub extern "C" fn chapters(extr_ptr_ptr: *mut ExtrPtr, ext_url_ptr: *const c_char) -> *mut Comic {
+pub extern "C" fn chapters(
+    extr_ptr_ptr: *mut ExtrPtr,
+    ext_url_ptr: *const c_char,
+    ext_title_ptr: *const c_char,
+) -> *mut Comic {
     let extr_ptr = unsafe { Box::from_raw(extr_ptr_ptr) };
     let extr = unsafe { &**extr_ptr };
     let url = unsafe { CStr::from_ptr(ext_url_ptr).to_str().unwrap() };
+    let title = unsafe { CStr::from_ptr(ext_title_ptr).to_str().unwrap() };
 
-    let comic = &mut models::Comic::from_url(url);
+    let comic = &mut models::Comic::from_link( title, url);
     extr.fetch_chapters(comic).unwrap();
 
     let url_ptr = CString::new(url.as_bytes()).unwrap().into_raw();
-    let title_ptr = CString::new(comic.title.as_bytes()).unwrap().into_raw();
+    let title_ptr = CString::new(title.as_bytes()).unwrap().into_raw();
     let cover_ptr = CString::new(comic.cover.as_bytes()).unwrap().into_raw();
 
     let chapters = CArray::from(&comic.chapters);
