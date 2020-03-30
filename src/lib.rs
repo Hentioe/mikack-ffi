@@ -1,7 +1,7 @@
 use libc::{c_char, c_int, c_uint, size_t};
 use mikack::{
     extractors,
-    models::{self, FromLink},
+    models::{self, FromLink, FromUrl},
 };
 use std::{
     collections::HashMap,
@@ -185,6 +185,7 @@ pub struct Comic {
     title: *mut c_char,
     url: *mut c_char,
     cover: *mut c_char,
+    chapters: *mut CArray<Chapter>,
 }
 
 #[derive(Debug)]
@@ -252,6 +253,7 @@ impl From<&models::Comic> for Comic {
             title: CString::new(c.title.as_bytes()).unwrap().into_raw(),
             url: CString::new(c.url.as_bytes()).unwrap().into_raw(),
             cover: CString::new(c.cover.as_bytes()).unwrap().into_raw(),
+            chapters: Box::into_raw(Box::new(CArray::from(&c.chapters))),
         }
     }
 }
@@ -291,10 +293,20 @@ pub extern "C" fn free_comic_array(ptr: *mut CArray<Comic>) {
                 CString::from_raw(c.title);
                 CString::from_raw(c.url);
                 CString::from_raw(c.cover);
+                free_chapter_array(c.chapters);
             })
             .for_each(drop);
         mem::drop(Box::from_raw(array.data));
     }
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn free_comic(ptr: *mut Comic) {
+    let comic = Box::from_raw(ptr);
+    CString::from_raw(comic.title);
+    CString::from_raw(comic.url);
+    CString::from_raw(comic.cover);
+    free_chapter_array(comic.chapters);
 }
 
 #[no_mangle]
@@ -311,21 +323,27 @@ pub extern "C" fn search(
 }
 
 #[no_mangle]
-pub extern "C" fn chapters(
-    extr_ptr_ptr: *mut ExtrPtr,
-    url_ptr: *const c_char,
-    title_prt: *const c_char,
-) -> *mut CArray<Chapter> {
-    let ptr = unsafe { Box::from_raw(extr_ptr_ptr) };
-    let extr = unsafe { &**ptr };
-    let url = unsafe { CStr::from_ptr(url_ptr).to_str().unwrap() };
-    let title = unsafe { CStr::from_ptr(title_prt).to_str().unwrap() };
+pub extern "C" fn chapters(extr_ptr_ptr: *mut ExtrPtr, ext_url_ptr: *const c_char) -> *mut Comic {
+    let extr_ptr = unsafe { Box::from_raw(extr_ptr_ptr) };
+    let extr = unsafe { &**extr_ptr };
+    let url = unsafe { CStr::from_ptr(ext_url_ptr).to_str().unwrap() };
 
-    let comic = &mut models::Comic::from_link(title, url);
+    let comic = &mut models::Comic::from_url(url);
     extr.fetch_chapters(comic).unwrap();
 
-    let array = CArray::from(&comic.chapters);
-    Box::into_raw(Box::new(array))
+    let url_ptr = CString::new(url.as_bytes()).unwrap().into_raw();
+    let title_ptr = CString::new(comic.title.as_bytes()).unwrap().into_raw();
+    let cover_ptr = CString::new(comic.cover.as_bytes()).unwrap().into_raw();
+
+    let chapters = CArray::from(&comic.chapters);
+    let chapters_ptr = Box::into_raw(Box::new(chapters));
+
+    Box::into_raw(Box::new(Comic {
+        title: title_ptr,
+        url: url_ptr,
+        cover: cover_ptr,
+        chapters: chapters_ptr,
+    }))
 }
 
 #[no_mangle]
