@@ -1,7 +1,8 @@
+use failure::err_msg;
 use libc::{c_char, c_int, c_uint, size_t};
 use mikack::{
     extractors,
-    models::{self, FromLink},
+    models::{self, FromLink, FromUrl},
 };
 use std::{
     ffi::{CStr, CString},
@@ -193,33 +194,44 @@ pub extern "C" fn search(
 }
 
 /// 加载章节列表，返回填充数据后的漫画结构
+/// extr_ptr: Extractor 的指针
+/// ext_url: 外部 URL 字符串
+/// ext_title: 外部标题字符串
+/// *更新错误并返回空指针*
+/// TODO: 未来此函数会将漫画指针作为唯一参数，无返回值
 #[no_mangle]
 pub extern "C" fn chapters(
-    extr_ptr_ptr: *mut ExtractorPtr,
-    ext_url_ptr: *const c_char,
-    ext_title_ptr: *const c_char,
-) -> *mut Comic {
-    let extr_ptr = unsafe { Box::from_raw(extr_ptr_ptr) };
+    extr_ptr: *mut ExtractorPtr,
+    ext_url: *const c_char,
+    ext_title: *const c_char,
+) -> *const Comic {
+    let extr_ptr = unsafe { Box::from_raw(extr_ptr) };
     let extr = unsafe { &**extr_ptr };
-    let url = unsafe { CStr::from_ptr(ext_url_ptr).to_str().unwrap() };
-    let title = unsafe { CStr::from_ptr(ext_title_ptr).to_str().unwrap() };
+    let url = unsafe { CStr::from_ptr(ext_url).to_str().unwrap() };
+    let title = unsafe { CStr::from_ptr(ext_title).to_str().unwrap() };
 
     let comic = &mut models::Comic::from_link(title, url);
-    extr.fetch_chapters(comic).unwrap();
+    match extr.fetch_chapters(comic) {
+        Ok(()) => {
+            let url_ptr = CString::new(url.as_bytes()).unwrap().into_raw();
+            let title_ptr = CString::new(title.as_bytes()).unwrap().into_raw();
+            let cover_ptr = CString::new(comic.cover.as_bytes()).unwrap().into_raw();
 
-    let url_ptr = CString::new(url.as_bytes()).unwrap().into_raw();
-    let title_ptr = CString::new(title.as_bytes()).unwrap().into_raw();
-    let cover_ptr = CString::new(comic.cover.as_bytes()).unwrap().into_raw();
+            let chapters = CArray::from(&comic.chapters);
+            let chapters_ptr = Box::into_raw(Box::new(chapters));
 
-    let chapters = CArray::from(&comic.chapters);
-    let chapters_ptr = Box::into_raw(Box::new(chapters));
-
-    Box::into_raw(Box::new(Comic {
-        title: title_ptr,
-        url: url_ptr,
-        cover: cover_ptr,
-        chapters: chapters_ptr,
-    }))
+            Box::into_raw(Box::new(Comic {
+                title: title_ptr,
+                url: url_ptr,
+                cover: cover_ptr,
+                chapters: chapters_ptr,
+            }))
+        }
+        Err(e) => {
+            update_last_error(e);
+            ptr::null()
+        }
+    }
 }
 
 /// 释放章节列表内存
@@ -259,37 +271,50 @@ pub unsafe fn free_headers(ptr: *mut CArray<KV<*mut c_char, *mut c_char>>) {
 }
 
 /// 创建章节指针
+/// ext_url: 外部 URL 字符串
+/// TODO: 未来此函数将删除，改为调用方自行创建章节指针
 #[no_mangle]
-pub extern "C" fn create_chapter_ptr(url_ptr: *const c_char) -> *mut models::Chapter {
-    let url = unsafe { CStr::from_ptr(url_ptr).to_str().unwrap() };
+pub extern "C" fn create_chapter_ptr(ext_url: *const c_char) -> *mut models::Chapter {
+    let url = unsafe { CStr::from_ptr(ext_url).to_str().unwrap() };
 
-    Box::into_raw(Box::new(models::Chapter::from_link("", url)))
+    Box::into_raw(Box::new(models::Chapter::from_url(url)))
 }
 
 /// 创建页面迭代器（需要外部章节指针）
+/// extr_ptr: Extractor 的指针
+/// chapter_ptr: 章节的指针（由 `create_chapter_ptr` 函数提供）
+/// *更新错误并返回空指针*
 #[no_mangle]
 pub extern "C" fn create_page_iter<'a>(
-    extr_ptr_ptr: *mut ExtractorPtr,
+    extr_ptr: *mut ExtractorPtr,
     chapter_ptr: *mut models::Chapter,
-) -> *mut CreatedPageIter<'a> {
-    let ptr = unsafe { Box::from_raw(extr_ptr_ptr) };
+) -> *const CreatedPageIter<'a> {
+    let ptr = unsafe { Box::from_raw(extr_ptr) };
     let extr = unsafe { &**ptr };
     let chapter = unsafe { &mut *chapter_ptr };
 
-    let mut iter = Box::new(extr.pages_iter(chapter).unwrap());
-    let title = iter.chapter_title_clone();
-    let count = iter.total;
-    let headers = &iter.chapter.page_headers;
+    match extr.pages_iter(chapter) {
+        Ok(iter) => {
+            let mut iter = Box::new(iter);
+            let title = iter.chapter_title_clone();
+            let count = iter.total;
+            let headers = &iter.chapter.page_headers;
 
-    let ptr = Box::into_raw(Box::new(CreatedPageIter {
-        count,
-        title: CString::new(title.as_bytes()).unwrap().into_raw(),
-        headers: create_headers_ptr(headers),
-        iter: &mut *iter,
-    }));
-    mem::forget(iter);
+            let ptr = Box::into_raw(Box::new(CreatedPageIter {
+                count,
+                title: CString::new(title.as_bytes()).unwrap().into_raw(),
+                headers: create_headers_ptr(headers),
+                iter: &mut *iter,
+            }));
+            mem::forget(iter);
 
-    ptr
+            ptr
+        }
+        Err(e) => {
+            update_last_error(e);
+            ptr::null()
+        }
+    }
 }
 
 /// 释放已创建的页面迭代器
@@ -304,17 +329,24 @@ pub extern "C" fn free_created_page_iter(ptr: *mut CreatedPageIter) {
 }
 
 /// 翻页（仅返回地址）
+/// iter: 页面迭代器
+/// *更新并返回错误*
+/// TODO: 未来此函数将返回页面结构指针
 #[no_mangle]
-pub extern "C" fn next_page<'a>(iter_ptr: *mut extractors::ChapterPages<'a>) -> *mut c_char {
-    let iter = unsafe { &mut *iter_ptr };
-    let empty_str = || CString::new("").unwrap().into_raw();
-    if let Some(page) = iter.next() {
-        match page {
-            Ok(p) => CString::new(p.address.as_bytes()).unwrap().into_raw(),
-            Err(e) => CString::new(e.to_string().as_bytes()).unwrap().into_raw(),
+pub extern "C" fn next_page<'a>(iter: *mut extractors::ChapterPages<'a>) -> *const c_char {
+    let iter = unsafe { &mut *iter };
+    if let Some(page_r) = iter.next() {
+        match page_r {
+            Ok(page) => CString::new(page.address.as_bytes()).unwrap().into_raw(),
+            Err(e) => {
+                update_last_error(e);
+                ptr::null()
+            }
         }
     } else {
-        empty_str()
+        // 没有下一页了
+        update_last_error(err_msg("No next page"));
+        ptr::null()
     }
 }
 

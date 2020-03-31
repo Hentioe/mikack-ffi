@@ -4,11 +4,11 @@ mikack 库的通用外部接口。
 
 ## 基本介绍
 
-本项目为 [mikack](https://github.com/Hentioe/mikack) 库进行 API 包装和 C ABI 导出，作为多种编程语言/操作系统的开发基石。如果您需要将 mikack 用于自己的技术中，本库应该是你需要的。
+本项目为 [mikack](https://github.com/Hentioe/mikack) 库进行 API 包装和 C ABI 导出，以支持多种编程语言/操作系统。如果您需要将 mikack 用于自己的技术中，本库应该是你需要的。
 
 ## 对本库的绑定
 
-- [mikack-dart](https://github.com/Hentioe/mikack-dart)（使用于 Dart 和 Flutter 应用）
+- [mikack-dart](https://github.com/Hentioe/mikack-dart)（适用于 Dart 和 Flutter 应用）
 
 ## 编译项目
 
@@ -20,8 +20,6 @@ mikack 库的通用外部接口。
 
 - Rust Stable（必须）
 - Android NDK（可选，将 Android 作为目标时需要）
-
-其中 NDK 无需添加到 PATH 中，并且我个人也不推荐添加到 PATH。
 
 ### Android 平台
 
@@ -49,7 +47,7 @@ BIN_PATH=/software/android-sdk/ndk/21.0.6113669/toolchains/llvm/prebuilt/linux-x
 
 #### 构建依赖
 
-执行 `make android` 命令，完成后将生成 `dist/android` 目录。直接复制 android 目录到 Flutter 项目的根目录覆盖。
+执行 `make android` 命令，完成后将生成 `dist/android` 目录。直接复制 android 目录到 Flutter 项目的根目录覆盖即可。
 
 ## 文档
 
