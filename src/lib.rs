@@ -4,61 +4,17 @@ use mikack::{
     models::{self, FromLink},
 };
 use std::{
-    collections::HashMap,
     ffi::{CStr, CString},
-    mem, slice,
+    mem, ptr, slice,
 };
 
-#[derive(Debug)]
-#[repr(C)]
-pub struct Platform {
-    pub domain: *mut c_char,
-    pub name: *mut c_char,
-    pub favicon: *mut c_char,
-    pub is_usable: bool,
-    pub is_searchable: bool,
-    pub is_pageable: bool,
-    pub is_https: bool,
-    pub is_search_pageable: bool,
-    pub tags: *mut CArray<Tag>,
-}
+mod error_handling;
+mod structs;
+pub use error_handling::*;
+use structs::*;
 
-#[derive(Debug)]
-#[repr(C)]
-pub struct CArray<T> {
-    pub len: size_t,
-    pub data: *mut T,
-}
-
-impl From<&HashMap<String, String>> for CArray<Platform> {
-    fn from(map: &HashMap<String, String>) -> Self {
-        let mut data_items = vec![];
-        for (domain, name) in map.iter() {
-            let extr = extractors::get_extr(domain).unwrap();
-            data_items.push(Platform {
-                domain: CString::new(domain.as_bytes()).unwrap().into_raw(),
-                name: CString::new(name.as_bytes()).unwrap().into_raw(),
-                favicon: CString::new(extr.get_favicon().unwrap_or(&"").as_bytes())
-                    .unwrap()
-                    .into_raw(),
-                is_usable: extr.is_usable(),
-                is_searchable: extr.is_searchable(),
-                is_pageable: extr.is_pageable(),
-                is_https: extr.is_https(),
-                is_search_pageable: extr.is_pageable_search(),
-                tags: create_tags_ptr(extr.tags()),
-            });
-        }
-
-        let len = data_items.len();
-        let mut boxed_data = data_items.into_boxed_slice();
-        let data = boxed_data.as_mut_ptr();
-        mem::forget(boxed_data);
-
-        CArray { len, data }
-    }
-}
-
+/// 获取全部平台列表
+/// 不发生错误
 #[no_mangle]
 pub extern "C" fn platforms() -> *mut CArray<Platform> {
     let platforms = CArray::from(extractors::platforms());
@@ -66,6 +22,8 @@ pub extern "C" fn platforms() -> *mut CArray<Platform> {
     Box::into_raw(Box::new(platforms))
 }
 
+/// 释放平台列表内存
+/// 不发生错误
 #[no_mangle]
 pub extern "C" fn free_platform_array(ptr: *mut CArray<Platform>) {
     unsafe {
@@ -86,38 +44,15 @@ pub extern "C" fn free_platform_array(ptr: *mut CArray<Platform>) {
     }
 }
 
-#[derive(Debug)]
-#[repr(C)]
-pub struct Tag {
-    value: i32,
-    name: *mut c_char,
-}
-
-impl From<&models::Tag> for Tag {
-    fn from(t: &models::Tag) -> Self {
-        Tag {
-            value: *t as i32,
-            name: CString::new(t.to_string().as_bytes()).unwrap().into_raw(),
-        }
-    }
-}
-
-pub fn create_tags_ptr(tags: &Vec<models::Tag>) -> *mut CArray<Tag> {
-    let items = tags.iter().map(|t| Tag::from(t)).collect::<Vec<_>>();
-
-    let len = items.len();
-    let mut boxed_data = items.into_boxed_slice();
-    let data = boxed_data.as_mut_ptr();
-    mem::forget(boxed_data);
-
-    Box::into_raw(Box::new(CArray { len, data }))
-}
-
+/// 获取全部标签列表
+/// 不发生错误
 #[no_mangle]
 pub extern "C" fn tags() -> *mut CArray<Tag> {
     create_tags_ptr(&models::Tag::all())
 }
 
+/// 释放标签列表内存
+/// 不发生错误
 #[no_mangle]
 pub extern "C" fn free_tag_array(ptr: *mut CArray<Tag>) {
     unsafe {
@@ -135,6 +70,7 @@ pub extern "C" fn free_tag_array(ptr: *mut CArray<Tag>) {
     }
 }
 
+/// 从枚举值列表转换为标签模型列表
 pub fn enumed_tags(values: &[i32]) -> Vec<models::Tag> {
     values
         .iter()
@@ -144,162 +80,84 @@ pub fn enumed_tags(values: &[i32]) -> Vec<models::Tag> {
         .collect::<Vec<_>>()
 }
 
+/// 查找平台列表
+/// includes:       包含标签枚举值数组
+/// includes_len:   包含标签列表的个数
+/// excludes:       排除标签枚举值数组
+/// excludes_len:   排除标签列表的个数
+/// 不发生错误
 #[no_mangle]
-pub extern "C" fn find_platforms(
-    inc_ptr: *mut c_int,
-    inc_len: size_t,
-    exc_ptr: *mut c_int,
-    exc_len: size_t,
+pub unsafe extern "C" fn find_platforms(
+    includes: *mut c_int,
+    includes_len: size_t,
+    excludes: *mut c_int,
+    excludes_len: size_t,
 ) -> *mut CArray<Platform> {
-    let includes = unsafe {
-        let values = slice::from_raw_parts_mut(inc_ptr, inc_len);
-        enumed_tags(values)
-    };
-    let excludes = unsafe {
-        let values = slice::from_raw_parts_mut(exc_ptr, exc_len);
-        enumed_tags(values)
-    };
+    let includes = enumed_tags(slice::from_raw_parts_mut(includes, includes_len));
+    let excludes = enumed_tags(slice::from_raw_parts_mut(excludes, excludes_len));
 
     let platforms = CArray::from(&extractors::find_platforms(includes, excludes));
 
     Box::into_raw(Box::new(platforms))
 }
 
-type ExtrPtr = *const dyn extractors::Extractor;
+type ExtractorPtr = *const dyn extractors::Extractor;
 
+/// 获取 Extractor
+/// domian: 域名字符串
+/// 不发生错误
 #[no_mangle]
-pub extern "C" fn get_extr(domain_ptr: *mut c_char) -> *mut ExtrPtr {
-    let domain = unsafe {
-        let cstr = CStr::from_ptr(domain_ptr);
-        cstr.to_str().unwrap()
-    };
+pub unsafe extern "C" fn get_extr(domian: *mut c_char) -> *mut ExtractorPtr {
+    let domain = CStr::from_ptr(domian).to_str().unwrap();
 
     Box::into_raw(Box::new(
-        extractors::get_extr(domain).unwrap().as_ref() as ExtrPtr
+        extractors::get_extr(domain).unwrap().as_ref() as ExtractorPtr
     ))
 }
 
-#[derive(Debug)]
-#[repr(C)]
-pub struct Comic {
-    title: *mut c_char,
-    url: *mut c_char,
-    cover: *mut c_char,
-    chapters: *mut CArray<Chapter>,
+/// 获取漫画列表
+/// extr_ptr:  Extractor 的指针
+/// *更新错误并返回空指针*
+#[no_mangle]
+pub extern "C" fn index(extr_ptr: *mut ExtractorPtr, page: c_uint) -> *const CArray<Comic> {
+    let extr_ptr = unsafe { Box::from_raw(extr_ptr) };
+    let extr = unsafe { &**extr_ptr };
+
+    match extr.index(page) {
+        Ok(comics) => {
+            let array = CArray::from(comics);
+            Box::into_raw(Box::new(array))
+        }
+        Err(e) => {
+            update_last_error(e);
+            ptr::null()
+        }
+    }
 }
 
-#[derive(Debug)]
-#[repr(C)]
-pub struct Chapter {
-    title: *mut c_char,
-    url: *mut c_char,
-    which: c_uint,
-    page_headers: *mut CArray<KV<*mut c_char, *mut c_char>>,
-}
-
-#[derive(Debug)]
-#[repr(C)]
-pub struct KV<K, V> {
-    key: K,
-    value: V,
-}
-
-pub fn create_headers_ptr(
-    headers: &HashMap<String, String>,
-) -> *mut CArray<KV<*mut c_char, *mut c_char>> {
-    let headers_items = headers
-        .iter()
-        .map(|(header, value)| KV {
-            key: CString::new(header.as_bytes()).unwrap().into_raw(),
-            value: CString::new(value.as_bytes()).unwrap().into_raw(),
+/// 释放漫画列表内存
+#[no_mangle]
+pub unsafe extern "C" fn free_comic_array(ptr: *mut CArray<Comic>) {
+    if ptr.is_null() {
+        return;
+    }
+    let array = Box::from_raw(ptr);
+    if array.len == 0 {
+        return;
+    }
+    slice::from_raw_parts_mut(array.data, array.len)
+        .iter_mut()
+        .map(|c: &mut Comic| {
+            CString::from_raw(c.title);
+            CString::from_raw(c.url);
+            CString::from_raw(c.cover);
+            free_chapter_array(c.chapters);
         })
-        .collect::<Vec<_>>();
-    let len = headers_items.len();
-    let mut boxed_data = headers_items.into_boxed_slice();
-    let data = boxed_data.as_mut_ptr();
-    mem::forget(boxed_data);
-
-    Box::into_raw(Box::new(CArray { len, data }))
+        .for_each(drop);
+    mem::drop(Box::from_raw(array.data));
 }
 
-impl From<&models::Chapter> for Chapter {
-    fn from(c: &models::Chapter) -> Self {
-        let page_headers = create_headers_ptr(&c.page_headers);
-        Chapter {
-            title: CString::new(c.title.as_bytes()).unwrap().into_raw(),
-            url: CString::new(c.url.as_bytes()).unwrap().into_raw(),
-            which: c.which,
-            page_headers,
-        }
-    }
-}
-
-impl From<&Vec<models::Chapter>> for CArray<Chapter> {
-    fn from(list: &Vec<models::Chapter>) -> Self {
-        let len = list.len();
-        let items = list.iter().map(|c| Chapter::from(c)).collect::<Vec<_>>();
-
-        let mut boxed_data = items.into_boxed_slice();
-        let data = boxed_data.as_mut_ptr();
-        mem::forget(boxed_data);
-
-        CArray { len, data }
-    }
-}
-
-impl From<&models::Comic> for Comic {
-    fn from(c: &models::Comic) -> Self {
-        Comic {
-            title: CString::new(c.title.as_bytes()).unwrap().into_raw(),
-            url: CString::new(c.url.as_bytes()).unwrap().into_raw(),
-            cover: CString::new(c.cover.as_bytes()).unwrap().into_raw(),
-            chapters: Box::into_raw(Box::new(CArray::from(&c.chapters))),
-        }
-    }
-}
-
-impl From<Vec<models::Comic>> for CArray<Comic> {
-    fn from(list: Vec<models::Comic>) -> Self {
-        let len = list.len();
-        let items = list.iter().map(|c| Comic::from(c)).collect::<Vec<_>>();
-
-        let mut boxed_data = items.into_boxed_slice();
-        let data = boxed_data.as_mut_ptr();
-        mem::forget(boxed_data);
-
-        CArray { len, data }
-    }
-}
-
-#[no_mangle]
-pub extern "C" fn index(extr_ptr_ptr: *mut ExtrPtr, page: c_uint) -> *mut CArray<Comic> {
-    let ptr = unsafe { Box::from_raw(extr_ptr_ptr) };
-    let extr = unsafe { &**ptr };
-
-    let array = CArray::from(extr.index(page).unwrap());
-    Box::into_raw(Box::new(array))
-}
-
-#[no_mangle]
-pub extern "C" fn free_comic_array(ptr: *mut CArray<Comic>) {
-    unsafe {
-        let array = Box::from_raw(ptr);
-        if array.len == 0 {
-            return;
-        }
-        slice::from_raw_parts_mut(array.data, array.len)
-            .iter_mut()
-            .map(|c: &mut Comic| {
-                CString::from_raw(c.title);
-                CString::from_raw(c.url);
-                CString::from_raw(c.cover);
-                free_chapter_array(c.chapters);
-            })
-            .for_each(drop);
-        mem::drop(Box::from_raw(array.data));
-    }
-}
-
+/// 释放漫画内存
 #[no_mangle]
 pub unsafe extern "C" fn free_comic(ptr: *mut Comic) {
     let comic = Box::from_raw(ptr);
@@ -309,22 +167,35 @@ pub unsafe extern "C" fn free_comic(ptr: *mut Comic) {
     free_chapter_array(comic.chapters);
 }
 
+/// 搜索漫画
+/// extr_ptr: Extractor 的指针
+/// keywords: 关键字字符串
+/// *更新错误并返回空指针*
 #[no_mangle]
 pub extern "C" fn search(
-    extr_ptr_ptr: *mut ExtrPtr,
-    keywords_ptr: *const c_char,
-) -> *mut CArray<Comic> {
-    let ptr = unsafe { Box::from_raw(extr_ptr_ptr) };
-    let extr = unsafe { &**ptr };
-    let keywords = unsafe { CStr::from_ptr(keywords_ptr).to_str().unwrap() };
+    extr_ptr: *mut ExtractorPtr,
+    keywords: *const c_char,
+) -> *const CArray<Comic> {
+    let extr_ptr = unsafe { Box::from_raw(extr_ptr) };
+    let extr = unsafe { &**extr_ptr };
+    let keywords = unsafe { CStr::from_ptr(keywords).to_str().unwrap() };
 
-    let array = CArray::from(extr.search(keywords).unwrap());
-    Box::into_raw(Box::new(array))
+    match extr.search(keywords) {
+        Ok(comics) => {
+            let array = CArray::from(comics);
+            Box::into_raw(Box::new(array))
+        }
+        Err(e) => {
+            update_last_error(e);
+            ptr::null()
+        }
+    }
 }
 
+/// 加载章节列表，返回填充数据后的漫画结构
 #[no_mangle]
 pub extern "C" fn chapters(
-    extr_ptr_ptr: *mut ExtrPtr,
+    extr_ptr_ptr: *mut ExtractorPtr,
     ext_url_ptr: *const c_char,
     ext_title_ptr: *const c_char,
 ) -> *mut Comic {
@@ -333,7 +204,7 @@ pub extern "C" fn chapters(
     let url = unsafe { CStr::from_ptr(ext_url_ptr).to_str().unwrap() };
     let title = unsafe { CStr::from_ptr(ext_title_ptr).to_str().unwrap() };
 
-    let comic = &mut models::Comic::from_link( title, url);
+    let comic = &mut models::Comic::from_link(title, url);
     extr.fetch_chapters(comic).unwrap();
 
     let url_ptr = CString::new(url.as_bytes()).unwrap().into_raw();
@@ -351,6 +222,7 @@ pub extern "C" fn chapters(
     }))
 }
 
+/// 释放章节列表内存
 #[no_mangle]
 pub extern "C" fn free_chapter_array(ptr: *mut CArray<Chapter>) {
     unsafe {
@@ -370,6 +242,7 @@ pub extern "C" fn free_chapter_array(ptr: *mut CArray<Chapter>) {
     }
 }
 
+/// 释放 Headers 内存
 pub unsafe fn free_headers(ptr: *mut CArray<KV<*mut c_char, *mut c_char>>) {
     let array = Box::from_raw(ptr);
     if array.len == 0 {
@@ -385,6 +258,7 @@ pub unsafe fn free_headers(ptr: *mut CArray<KV<*mut c_char, *mut c_char>>) {
     mem::drop(Box::from_raw(array.data));
 }
 
+/// 创建章节指针
 #[no_mangle]
 pub extern "C" fn create_chapter_ptr(url_ptr: *const c_char) -> *mut models::Chapter {
     let url = unsafe { CStr::from_ptr(url_ptr).to_str().unwrap() };
@@ -392,18 +266,10 @@ pub extern "C" fn create_chapter_ptr(url_ptr: *const c_char) -> *mut models::Cha
     Box::into_raw(Box::new(models::Chapter::from_link("", url)))
 }
 
-#[derive(Debug)]
-#[repr(C)]
-pub struct CreatedPageIter<'a> {
-    count: c_int,
-    title: *mut c_char,
-    headers: *mut CArray<KV<*mut c_char, *mut c_char>>,
-    iter: *mut extractors::ChapterPages<'a>,
-}
-
+/// 创建页面迭代器（需要外部章节指针）
 #[no_mangle]
 pub extern "C" fn create_page_iter<'a>(
-    extr_ptr_ptr: *mut ExtrPtr,
+    extr_ptr_ptr: *mut ExtractorPtr,
     chapter_ptr: *mut models::Chapter,
 ) -> *mut CreatedPageIter<'a> {
     let ptr = unsafe { Box::from_raw(extr_ptr_ptr) };
@@ -426,6 +292,7 @@ pub extern "C" fn create_page_iter<'a>(
     ptr
 }
 
+/// 释放已创建的页面迭代器
 #[no_mangle]
 pub extern "C" fn free_created_page_iter(ptr: *mut CreatedPageIter) {
     unsafe {
@@ -436,6 +303,7 @@ pub extern "C" fn free_created_page_iter(ptr: *mut CreatedPageIter) {
     };
 }
 
+/// 翻页（仅返回地址）
 #[no_mangle]
 pub extern "C" fn next_page<'a>(iter_ptr: *mut extractors::ChapterPages<'a>) -> *mut c_char {
     let iter = unsafe { &mut *iter_ptr };
@@ -450,6 +318,7 @@ pub extern "C" fn next_page<'a>(iter_ptr: *mut extractors::ChapterPages<'a>) -> 
     }
 }
 
+/// 释放字符串内存
 #[no_mangle]
 pub extern "C" fn free_string(ptr: *mut c_char) {
     unsafe {

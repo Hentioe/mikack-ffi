@@ -10,6 +10,7 @@ crate-type = ["cdylib"]
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-mikack = { git = "https://github.com/Hentioe/mikack", branch = "master" }
 libc = "0.2.67"
+failure = "0.1.7"
+mikack = { git = "https://github.com/Hentioe/mikack", branch = "master" }
 openssl-sys = { version = "0.9.54", features = ["vendored"]}
