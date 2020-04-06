@@ -181,7 +181,7 @@ pub extern "C" fn search(
     let extr = unsafe { &**extr_ptr };
     let keywords = unsafe { CStr::from_ptr(keywords).to_str().unwrap() };
 
-    match extr.search(keywords) {
+    match extr.paginated_search(keywords, 1) {
         Ok(comics) => {
             let array = CArray::from(comics);
             Box::into_raw(Box::new(array))
