@@ -6,10 +6,10 @@ CARGO_BIN ?= `which cargo`
 .PHONY: config android
 
 export X86_64_ANDROID_KEY="[target.x86_64-linux-android]"
-export X86_64_ANDROID_LINKER="${NDK_BIN_PATH}/x86_64-linux-android29-clang"
+export X86_64_ANDROID_LINKER="${NDK_BIN_PATH}/x86_64-linux-android21-clang"
 export X86_64_ANDROID_AR="${NDK_BIN_PATH}/x86_64-linux-android-ar"
 export AARCH64_ANDROID_KEY="[target.aarch64-linux-android]"
-export AARCH64_ANDROID_LINKER="${NDK_BIN_PATH}/aarch64-linux-android29-clang"
+export AARCH64_ANDROID_LINKER="${NDK_BIN_PATH}/aarch64-linux-android21-clang"
 export AARCH64_ANDROID_AR="${NDK_BIN_PATH}/aarch64-linux-android-ar"
 
 .DEFAULT_GOAL := default
